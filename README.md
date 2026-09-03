@@ -118,6 +118,43 @@ The overlay draws the configured zone, each track's trajectory and the active
 `INTRUSION` or `LOITERING` label. Events are also logged as one JSON object per
 line. Use `--no-events` to run tracking without the event layer.
 
+### Perspective-aware ground-plane zones
+
+A single ordinary camera frame cannot provide metric height and depth without
+camera calibration or a depth sensor. For a fixed camera, the supported
+engineering solution is a calibrated ground plane: select four floor points in
+the image, assign their real-world coordinates (for example, metres), and
+define zones in those world coordinates. Copy
+`deep_sort/configs/events_ground_plane.yaml`, replace its four calibration
+points, and run with:
+
+```bash
+python track.py --source 0 \
+  --event-config deep_sort/configs/events_ground_plane.yaml \
+  --show-vid
+```
+
+Ground-plane zones use the bottom-center footpoint of each person rather than
+the box center, so a tall person is classified by where they stand on the
+floor. The displayed polygon is projected back into the camera image.
+
+### Dense MOT20 sequences
+
+MOT20 includes official detector boxes in each sequence's `det/det.txt`. To
+avoid additional YOLO misses in crowded scenes, use those boxes directly:
+
+```bash
+python track.py \
+  --mot-root . --mot-dataset MOT20 --mot-split train \
+  --mot-sequence MOT20-01 --mot-use-det --mot-det-conf 0.2 \
+  --deep_sort_model resnet50_MSMT17 --device cpu --save-vid
+```
+
+For YOLO-only tracking, dense scenes usually benefit from a larger input and
+more permissive detection thresholds, for example `--imgsz 1280
+--conf-thres 0.25 --iou-thres 0.65`. The best values depend on the camera and
+detector checkpoint.
+
 
 ## Select object detection and ReID model
 

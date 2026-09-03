@@ -68,6 +68,30 @@ def read_mot_fps(image_dir):
     return None
 
 
+def load_mot_detections(path, min_confidence=0.0):
+    """Load MOT ``det/det.txt`` boxes keyed by 1-based frame number."""
+    detections = {}
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f'MOT detection file not found: {path}')
+    with path.open('r', encoding='utf-8') as handle:
+        for line_number, line in enumerate(handle, 1):
+            if not line.strip():
+                continue
+            fields = line.strip().split(',')
+            if len(fields) < 7:
+                raise ValueError(f'Invalid MOT detection at {path}:{line_number}')
+            frame = int(float(fields[0]))
+            x, y, width, height = [float(value) for value in fields[2:6]]
+            confidence = float(fields[6])
+            if confidence < min_confidence or width <= 0 or height <= 0:
+                continue
+            detections.setdefault(frame, []).append(
+                [x, y, x + width, y + height, confidence, 0.0]
+            )
+    return detections
+
+
 def detect(opt):
     out, source, yolo_model, deep_sort_model, show_vid, save_vid, save_txt, imgsz, evaluate, half, \
         project, exist_ok, update, save_crop = \
@@ -124,6 +148,10 @@ def detect(opt):
     else:
         dataset = LoadImages(source, img_size=imgsz, stride=stride, auto=pt)
         nr_sources = 1
+    mot_detections = None
+    if opt.mot_use_det:
+        mot_det_path = Path(source).parent / 'det' / 'det.txt'
+        mot_detections = load_mot_detections(mot_det_path, opt.mot_det_conf)
     vid_path, vid_writer, txt_path = [None] * nr_sources, [None] * nr_sources, [None] * nr_sources
 
     # initialize deepsort
@@ -174,14 +202,18 @@ def detect(opt):
         t2 = time_sync()
         dt[0] += t2 - t1
 
-        # Inference
-        visualize = increment_path(save_dir / Path(path[0]).stem, mkdir=True) if opt.visualize else False
-        pred = model(im, augment=opt.augment, visualize=visualize)
-        t3 = time_sync()
+        # Inference. MOT's official detector boxes can be used to avoid
+        # YOLO misses in dense crowds; they are already in original-image coordinates.
+        if mot_detections is not None:
+            frame_detections = mot_detections.get(frame_idx + 1, [])
+            pred = [torch.tensor(frame_detections, device=device)]
+            t3 = time_sync()
+        else:
+            visualize = increment_path(save_dir / Path(path[0]).stem, mkdir=True) if opt.visualize else False
+            pred = model(im, augment=opt.augment, visualize=visualize)
+            t3 = time_sync()
+            pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, opt.classes, opt.agnostic_nms, max_det=opt.max_det)
         dt[1] += t3 - t2
-
-        # Apply NMS
-        pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, opt.classes, opt.agnostic_nms, max_det=opt.max_det)
         dt[2] += time_sync() - t3
 
         # Process detections
@@ -217,7 +249,8 @@ def detect(opt):
 
             if det is not None and len(det):
                 # Rescale boxes from img_size to im0 size
-                det[:, :4] = scale_coords(im.shape[2:], det[:, :4], im0.shape).round()
+                if mot_detections is None:
+                    det[:, :4] = scale_coords(im.shape[2:], det[:, :4], im0.shape).round()
 
                 # Print results
                 for c in det[:, -1].unique():
@@ -291,7 +324,9 @@ def detect(opt):
             # Stream results
             im0 = annotator.result()
             if event_detectors[i] is not None:
-                im0 = event_detectors[i].draw(im0, current_statuses, current_events)
+                im0 = event_detectors[i].draw(
+                    im0, current_statuses, current_events, frame_idx + 1
+                )
             if show_vid:
                 cv2.imshow(str(p), im0)
                 cv2.waitKey(1)  # 1 millisecond
@@ -362,6 +397,10 @@ if __name__ == '__main__':
     parser.add_argument('--mot-split', choices=['train', 'test'], default='train')
     parser.add_argument('--mot-sequence', type=str, default='',
                         help='MOT sequence name, for example MOT17-04-SDP')
+    parser.add_argument('--mot-use-det', action='store_true',
+                        help='use the sequence det/det.txt boxes instead of YOLO detections')
+    parser.add_argument('--mot-det-conf', type=float, default=0.2,
+                        help='minimum confidence for MOT det.txt boxes')
     parser.add_argument('--project', default=ROOT / 'runs/track', help='save results to project/name')
     parser.add_argument('--name', default='exp', help='save results to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
@@ -380,6 +419,8 @@ if __name__ == '__main__':
         opt.save_txt = True
         if opt.classes is None:
             opt.classes = [0]
+    elif opt.mot_use_det:
+        parser.error('--mot-use-det requires --mot-root and --mot-sequence')
 
     with torch.no_grad():
         detect(opt)

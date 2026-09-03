@@ -1,0 +1,27 @@
+EVENTS:
+  ENABLED: true
+  COORDINATE_SYSTEM: "ground_plane"
+
+  # Pick four visible points on the same floor plane in clockwise order.
+  # WORLD_POINTS are real scene coordinates, normally measured in metres.
+  CALIBRATION:
+    IMAGE_POINTS: [[300, 520], [1620, 520], [1900, 1080], [100, 1080]]
+    WORLD_POINTS: [[0, 0], [20, 0], [20, 12], [0, 12]]
+
+  # These polygons are now in WORLD_POINTS units, not image pixels.
+  ZONES:
+    - NAME: "restricted_zone"
+      COLOR: [0, 0, 255]
+      POLYGON: [[12, 2], [18, 2], [18, 9], [12, 9]]
+
+  USE_FOOTPOINT: true
+  TRAJECTORY_HISTORY_FRAMES: 180
+  TRACK_STATE_TTL_FRAMES: 90
+  TRAJECTORY_MAX_GAP_FRAMES: 15
+  TRAJECTORY_MAX_JUMP_PIXELS_PER_FRAME: 120
+
+  LOITERING:
+    ENABLED: true
+    MIN_DURATION_SECONDS: 10.0
+    MAX_MOVEMENT_UNITS: 1.5
+    REQUIRE_RESTRICTED_ZONE: true

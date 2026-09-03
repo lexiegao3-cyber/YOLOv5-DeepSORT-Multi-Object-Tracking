@@ -1,16 +1,24 @@
 EVENTS:
   ENABLED: true
 
+  # Keep "image" for the current pixel polygon. For a calibrated camera,
+  # switch to "ground_plane" and use events_ground_plane.yaml as a template.
+  COORDINATE_SYSTEM: "image"
+  USE_FOOTPOINT: false
+
   # Polygon points are [x, y] pixel coordinates in the original image.
   # Replace these example points with the restricted area in your camera view.
   # COLOR uses OpenCV BGR order: [0, 0, 255] is red.
   ZONES:
     - NAME: "restricted_zone"
       COLOR: [0, 0, 255]
-      POLYGON: [[480, 180], [620, 180], [620, 420], [480, 420]]
+      #POLYGON: [[480, 180], [620, 180], [620, 420], [480, 420]]
+      POLYGON: [[1200, 300], [1700, 300], [1700, 900], [1200, 900]]
 
   TRAJECTORY_HISTORY_FRAMES: 120
   TRACK_STATE_TTL_FRAMES: 90
+  TRAJECTORY_MAX_GAP_FRAMES: 15
+  TRAJECTORY_MAX_JUMP_PIXELS_PER_FRAME: 120
 
   LOITERING:
     ENABLED: true
