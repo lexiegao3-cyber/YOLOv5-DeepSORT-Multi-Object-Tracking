@@ -15,6 +15,7 @@ MOT20Labels/
 mot_data/
 runs/
 *.jsonl
+*.sqlite3
 __pycache__/
 *.py[cod]
 .DS_Store

@@ -31,6 +31,7 @@ from yolov5.utils.plots import Annotator, colors, save_one_box
 from deep_sort.utils.parser import get_config
 from deep_sort.deep_sort import DeepSort
 from deep_sort.events import EventLogger, load_event_config
+from deep_sort.watchlist import WatchlistDB
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # yolov5 deepsort root directory
@@ -185,6 +186,13 @@ def detect(opt):
         event_cfg.merge_from_file(opt.event_config)
         if event_cfg.get('EVENTS', {}).get('ENABLED', True):
             event_detectors = [load_event_config(event_cfg) for _ in range(nr_sources)]
+    watchlist = WatchlistDB(
+        opt.watchlist_db,
+        body_threshold=opt.watch_body_threshold,
+        face_threshold=opt.watch_face_threshold,
+        min_intrusions=opt.watch_min_intrusions,
+        min_loitering=opt.watch_min_loitering,
+    ) if opt.watchlist_db else None
 
     # Get names and colors
     names = model.module.names if hasattr(model, 'module') else model.names
@@ -314,12 +322,28 @@ def detect(opt):
                 current_events, current_statuses = event_detectors[i].update(
                     outputs[i], frame_idx + 1, fps=fps
                 )
-                for event in current_events:
-                    LOGGER.warning(
-                        'EVENT %s: ID %s%s', event['event'], event['track_id'],
-                        f" in {event['zone']}" if event['zone'] else ''
-                    )
-                    event_logger.write([event])
+
+            watchlist_statuses = {}
+            if watchlist is not None:
+                profiles = {
+                    int(output[4]): deepsort_list[i].get_track_profile(int(output[4]))
+                    for output in outputs[i]
+                }
+                watchlist_statuses = watchlist.observe(
+                    profiles,
+                    current_events,
+                    manual_track_id=opt.watch_track_id,
+                    manual_label=opt.watch_label,
+                )
+            for event in current_events:
+                target = watchlist_statuses.get(int(event['track_id']))
+                if target is not None:
+                    event['watchlist_id'] = target['target_id']
+                LOGGER.warning(
+                    'EVENT %s: ID %s%s', event['event'], event['track_id'],
+                    f" in {event['zone']}" if event['zone'] else ''
+                )
+                event_logger.write([event])
 
             # Stream results
             im0 = annotator.result()
@@ -327,6 +351,15 @@ def detect(opt):
                 im0 = event_detectors[i].draw(
                     im0, current_statuses, current_events, frame_idx + 1
                 )
+            for output in outputs[i]:
+                target = watchlist_statuses.get(int(output[4]))
+                if target is not None:
+                    x1, y1 = int(output[0]), int(output[1])
+                    cv2.putText(
+                        im0, f"{target['label']} / ID {int(output[4])}",
+                        (x1, max(y1 - 28, 20)), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.65, (0, 0, 255), 2, cv2.LINE_AA,
+                    )
             if show_vid:
                 cv2.imshow(str(p), im0)
                 cv2.waitKey(1)  # 1 millisecond
@@ -401,6 +434,20 @@ if __name__ == '__main__':
                         help='use the sequence det/det.txt boxes instead of YOLO detections')
     parser.add_argument('--mot-det-conf', type=float, default=0.2,
                         help='minimum confidence for MOT det.txt boxes')
+    parser.add_argument('--watchlist-db', type=str, default='runs/watchlist.sqlite3',
+                        help='SQLite database for persistent watchlist targets; empty disables it')
+    parser.add_argument('--watch-track-id', type=int, default=None,
+                        help='manually lock this current tracker ID into the watchlist')
+    parser.add_argument('--watch-label', type=str, default='suspect',
+                        help='label assigned to a manually locked target')
+    parser.add_argument('--watch-min-intrusions', type=int, default=3,
+                        help='intrusion events required for automatic watchlist promotion')
+    parser.add_argument('--watch-min-loitering', type=int, default=1,
+                        help='loitering events required for automatic watchlist promotion')
+    parser.add_argument('--watch-body-threshold', type=float, default=0.35,
+                        help='cosine distance threshold for body ReID watchlist matching')
+    parser.add_argument('--watch-face-threshold', type=float, default=0.40,
+                        help='cosine distance threshold for face ReID watchlist matching')
     parser.add_argument('--project', default=ROOT / 'runs/track', help='save results to project/name')
     parser.add_argument('--name', default='exp', help='save results to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')

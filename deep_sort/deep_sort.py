@@ -154,6 +154,21 @@ class DeepSort(object):
     def increment_ages(self):
         self.tracker.increment_ages()
 
+    def get_track_profile(self, track_id):
+        """Return representative body/face embeddings for a current track."""
+        track_id = int(track_id)
+        body_gallery = self.tracker.metric.samples.get(track_id, [])
+        face_gallery = (
+            self.tracker.face_metric.samples.get(track_id, [])
+            if self.tracker.face_metric is not None else []
+        )
+        return {
+            "body": np.asarray(body_gallery[-1], dtype=np.float32).copy()
+            if body_gallery else None,
+            "face": np.asarray(face_gallery[-1], dtype=np.float32).copy()
+            if face_gallery else None,
+        }
+
     def _xyxy_to_tlwh(self, bbox_xyxy):
         x1, y1, x2, y2 = bbox_xyxy
 
