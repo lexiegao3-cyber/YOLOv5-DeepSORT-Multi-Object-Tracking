@@ -1,19 +1,21 @@
 EVENTS:
   ENABLED: true
 
-  # Keep "image" for the current pixel polygon. For a calibrated camera,
-  # switch to "ground_plane" and use events_ground_plane.yaml as a template.
-  COORDINATE_SYSTEM: "image"
-  USE_FOOTPOINT: false
+  # Calibrated ground-plane coordinates. The four image points map to the
+  # corresponding real-world floor coordinates below.
+  COORDINATE_SYSTEM: "ground_plane"
+  USE_FOOTPOINT: true
 
-  # Polygon points are [x, y] pixel coordinates in the original image.
-  # Replace these example points with the restricted area in your camera view.
+  CALIBRATION:
+    IMAGE_POINTS: [[300, 520], [1620, 520], [1900, 1080], [100, 1080]]
+    WORLD_POINTS: [[0, 0], [20, 0], [20, 12], [0, 12]]
+
+  # Polygon points are now floor/world coordinates, not image pixels.
   # COLOR uses OpenCV BGR order: [0, 0, 255] is red.
   ZONES:
     - NAME: "restricted_zone"
       COLOR: [0, 0, 255]
-      #POLYGON: [[480, 180], [620, 180], [620, 420], [480, 420]]
-      POLYGON: [[1200, 300], [1700, 300], [1700, 900], [1200, 900]]
+      POLYGON: [[12, 2], [18, 2], [18, 9], [12, 9]]
 
   TRAJECTORY_HISTORY_FRAMES: 120
   TRACK_STATE_TTL_FRAMES: 90
@@ -23,6 +25,6 @@ EVENTS:
   LOITERING:
     ENABLED: true
     MIN_DURATION_SECONDS: 10.0
-    MAX_MOVEMENT_PIXELS: 60.0
+    MAX_MOVEMENT_UNITS: 1.5
     # When true, a person must be inside one of the configured zones.
     REQUIRE_RESTRICTED_ZONE: true
