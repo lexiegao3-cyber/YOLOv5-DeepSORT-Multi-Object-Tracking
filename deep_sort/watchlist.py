@@ -70,6 +70,9 @@ class WatchlistDB:
         )
         self.connection.commit()
         self.candidates = {}
+        # Track IDs are only meaningful inside the current process. Never use
+        # the persisted last_track_id as an identity across a new run.
+        self.session_bindings = {}
 
     @staticmethod
     def _profile_blob(feature):
@@ -94,6 +97,12 @@ class WatchlistDB:
             "face_embedding": self._profile_from_blob(row["face_embedding"]),
         }
 
+    def _target_by_id(self, target_id):
+        row = self.connection.execute(
+            "SELECT * FROM targets WHERE target_id = ?", (int(target_id),)
+        ).fetchone()
+        return self._row_to_target(row)
+
     def _targets(self):
         return [self._row_to_target(row) for row in self.connection.execute(
             "SELECT * FROM targets ORDER BY target_id"
@@ -108,7 +117,8 @@ class WatchlistDB:
 
     def status_for_track(self, track_id):
         """Return the persistent watchlist label currently bound to a track."""
-        target = self._find_by_track_id(track_id)
+        target_id = self.session_bindings.get(int(track_id))
+        target = self._target_by_id(target_id) if target_id is not None else None
         if target is None:
             return None
         return {"target_id": target["target_id"], "label": f"WATCHLIST-{target['target_id']}"}
@@ -120,16 +130,16 @@ class WatchlistDB:
         for target in self._targets():
             body_distance = _cosine_distance(body_feature, target["body_embedding"])
             face_distance = _cosine_distance(face_feature, target["face_embedding"])
-            normalised_scores = []
-            if body_distance is not None:
-                normalised_scores.append(body_distance / max(self.body_threshold, 1e-6))
-            if face_distance is not None:
-                normalised_scores.append(face_distance / max(self.face_threshold, 1e-6))
-            if not normalised_scores:
+            if face_feature is not None and target["face_embedding"] is not None:
+                # When both faces are available, require the face match. This
+                # prevents a similar outfit/body from hijacking a target.
+                if face_distance is None or face_distance > self.face_threshold:
+                    continue
+                score = face_distance / max(self.face_threshold, 1e-6)
+            elif body_distance is not None:
+                score = body_distance / max(self.body_threshold, 1e-6)
+            else:
                 continue
-            # Face is more discriminative when available; a good face or body
-            # match can recover a target after a long occlusion.
-            score = min(normalised_scores)
             if score <= 1.0 and score < best_score:
                 best_target, best_score = target, score
         return best_target
@@ -199,19 +209,23 @@ class WatchlistDB:
         bindings = {}
         events = events or []
         for track_id, profile in profiles.items():
-            target = self._find_by_track_id(track_id)
+            target_id = self.session_bindings.get(int(track_id))
+            target = self._target_by_id(target_id) if target_id is not None else None
             if target is None:
                 target = self._match_embeddings(profile.get("body"), profile.get("face"))
             if target is not None:
                 self._update_target(target, track_id, profile)
+                self.session_bindings[int(track_id)] = target["target_id"]
                 bindings[int(track_id)] = target["target_id"]
 
         if manual_track_id is not None and manual_track_id in profiles:
-            target = self._find_by_track_id(manual_track_id)
+            target_id = self.session_bindings.get(int(manual_track_id))
+            target = self._target_by_id(target_id) if target_id is not None else None
             if target is None:
                 target = self._create_target(
                     manual_track_id, profiles[manual_track_id], "manual_selection", manual_label
                 )
+            self.session_bindings[int(manual_track_id)] = target["target_id"]
             bindings[int(manual_track_id)] = target["target_id"]
 
         for event in events:
@@ -230,6 +244,7 @@ class WatchlistDB:
                     target = self._create_target(
                         track_id, profiles[track_id], f"auto_{event['event']}",
                     )
+                    self.session_bindings[int(track_id)] = target["target_id"]
                     bindings[track_id] = target["target_id"]
                     self._record_event(target["target_id"], event)
 
