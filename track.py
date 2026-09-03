@@ -53,6 +53,21 @@ def resolve_mot_image_dir(root, dataset, split, sequence):
     raise FileNotFoundError('MOT sequence not found. Expected: ' + ', '.join(expected))
 
 
+def read_mot_fps(image_dir):
+    """Read frameRate from the sequence metadata when available."""
+    seqinfo = Path(image_dir).parent / 'seqinfo.ini'
+    if not seqinfo.is_file():
+        return None
+    for line in seqinfo.read_text(encoding='utf-8').splitlines():
+        key, separator, value = line.partition('=')
+        if separator and key.strip().lower() == 'framerate':
+            try:
+                return float(value.strip())
+            except ValueError:
+                return None
+    return None
+
+
 def detect(opt):
     out, source, yolo_model, deep_sort_model, show_vid, save_vid, save_txt, imgsz, evaluate, half, \
         project, exist_ok, update, save_crop = \
@@ -262,7 +277,7 @@ def detect(opt):
                 elif webcam:
                     fps = 30.0
                 else:
-                    fps = opt.fps
+                    fps = opt.fps or 15.0
                 current_events, current_statuses = event_detectors[i].update(
                     outputs[i], frame_idx + 1, fps=fps
                 )
@@ -339,8 +354,8 @@ if __name__ == '__main__':
     parser.add_argument('--event-log', type=str, default='',
                         help='optional JSONL file for intrusion/loitering events')
     parser.add_argument('--no-events', action='store_true', help='disable event detection and drawing')
-    parser.add_argument('--fps', type=float, default=15.0,
-                        help='FPS used for image folders and MOT sequences')
+    parser.add_argument('--fps', type=float, default=0.0,
+                        help='FPS override; 0 reads MOT seqinfo.ini or uses 15 for image folders')
     parser.add_argument('--mot-root', type=str, default='',
                         help='MOT17/MOT20 root; enables standard sequence input')
     parser.add_argument('--mot-dataset', choices=['MOT17', 'MOT20'], default='MOT17')
@@ -356,9 +371,12 @@ if __name__ == '__main__':
     if opt.mot_root:
         if not opt.mot_sequence:
             parser.error('--mot-sequence is required when --mot-root is used')
-        opt.source = str(resolve_mot_image_dir(
+        mot_image_dir = resolve_mot_image_dir(
             opt.mot_root, opt.mot_dataset, opt.mot_split, opt.mot_sequence
-        ))
+        )
+        opt.source = str(mot_image_dir)
+        if not opt.fps:
+            opt.fps = read_mot_fps(mot_image_dir) or 15.0
         opt.save_txt = True
         if opt.classes is None:
             opt.classes = [0]
