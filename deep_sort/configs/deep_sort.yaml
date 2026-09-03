@@ -2,7 +2,13 @@ DEEPSORT:
   MODEL_TYPE: "osnet_x_25"
   MAX_DIST: 0.2 # The matching threshold. Samples with larger distance are considered an invalid match
   MAX_IOU_DISTANCE: 0.7 # Gating threshold. Associations with cost larger than this value are disregarded.
-  MAX_AGE: 30 # Maximum number of missed misses before a track is deleted
+  MAX_AGE: 60 # Maximum number of missed misses before a track is deleted
   N_INIT: 3 # Number of frames that a track remains in initialization phase
   NN_BUDGET: 100 # Maximum size of the appearance descriptors gallery
+  FACE_MODEL: "buffalo_l" # InsightFace SCRFD + ArcFace model package
+  FACE_MAX_DIST: 0.4 # Cosine distance threshold for face embeddings
+  FACE_WEIGHT: 0.45 # Weight of face cost when a reliable face is available
+  FACE_MIN_SCORE: 0.65 # Minimum face detector confidence
+  FACE_MIN_SIZE: 40 # Minimum face width/height in pixels
+  LOST_TRACK_TTL: 900 # Frames to retain deleted IDs for appearance-only reactivation
   

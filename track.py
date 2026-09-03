@@ -110,6 +110,12 @@ def detect(opt):
                 max_dist=cfg.DEEPSORT.MAX_DIST,
                 max_iou_distance=cfg.DEEPSORT.MAX_IOU_DISTANCE,
                 max_age=cfg.DEEPSORT.MAX_AGE, n_init=cfg.DEEPSORT.N_INIT, nn_budget=cfg.DEEPSORT.NN_BUDGET,
+                face_model=cfg.DEEPSORT.FACE_MODEL,
+                face_max_dist=cfg.DEEPSORT.FACE_MAX_DIST,
+                face_weight=cfg.DEEPSORT.FACE_WEIGHT,
+                face_min_score=cfg.DEEPSORT.FACE_MIN_SCORE,
+                face_min_size=cfg.DEEPSORT.FACE_MIN_SIZE,
+                lost_track_ttl=cfg.DEEPSORT.LOST_TRACK_TTL,
             )
         )
     outputs = [None] * nr_sources

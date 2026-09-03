@@ -4,7 +4,7 @@ import numpy as np
 from . import kalman_filter
 from . import linear_assignment
 from . import iou_matching
-from .track import Track
+from .track import Track, TrackState
 
 
 class Tracker:
@@ -35,12 +35,17 @@ class Tracker:
     """
     GATING_THRESHOLD = np.sqrt(kalman_filter.chi2inv95[4])
 
-    def __init__(self, metric, max_iou_distance=0.9, max_age=30, n_init=3, _lambda=0):
+    def __init__(self, metric, max_iou_distance=0.9, max_age=30, n_init=3, _lambda=0,
+                 face_metric=None, face_weight=0.45, lost_track_ttl=900):
         self.metric = metric
+        self.face_metric = face_metric
+        self.face_weight = face_weight
         self.max_iou_distance = max_iou_distance
         self.max_age = max_age
         self.n_init = n_init
         self._lambda = _lambda
+        self.lost_track_ttl = lost_track_ttl
+        self.lost_tracks = []
 
         self.kf = kalman_filter.KalmanFilter()
         self.tracks = []
@@ -55,9 +60,13 @@ class Tracker:
             track.predict(self.kf)
 
     def increment_ages(self):
+        self._advance_lost_tracks()
         for track in self.tracks:
             track.increment_age()
+            if track.time_since_update > self.max_age:
+                self._store_lost_track(track)
             track.mark_missed()
+        self.tracks = [t for t in self.tracks if not t.is_deleted()]
 
     def update(self, detections, classes):
         """Perform measurement update and track management.
@@ -68,7 +77,9 @@ class Tracker:
             A list of detections at the current time step.
 
         """
-        # Run matching cascade.
+        self._advance_lost_tracks()
+
+        # Run matching cascade for active tracks.
         matches, unmatched_tracks, unmatched_detections = \
             self._match(detections)
 
@@ -77,21 +88,186 @@ class Tracker:
             self.tracks[track_idx].update(
                 self.kf, detections[detection_idx], classes[detection_idx])
         for track_idx in unmatched_tracks:
+            if track_idx < len(self.tracks) and self.tracks[track_idx].time_since_update > self.max_age:
+                self._store_lost_track(self.tracks[track_idx])
             self.tracks[track_idx].mark_missed()
+        self.tracks = [t for t in self.tracks if not t.is_deleted()]
+
+        # Reactivate deleted tracks before assigning new IDs.
+        lost_matches, unmatched_detections = self._match_lost_tracks(
+            detections, unmatched_detections
+        )
+        for lost_idx, detection_idx in lost_matches:
+            self._reactivate_track(
+                self.lost_tracks[lost_idx],
+                detections[detection_idx],
+                classes[detection_idx],
+            )
+        reactivated_indices = {lost_idx for lost_idx, _ in lost_matches}
+        if reactivated_indices:
+            self.lost_tracks = [
+                record for index, record in enumerate(self.lost_tracks)
+                if index not in reactivated_indices
+            ]
+
         for detection_idx in unmatched_detections:
             self._initiate_track(detections[detection_idx], classes[detection_idx].item())
-        self.tracks = [t for t in self.tracks if not t.is_deleted()]
 
         # Update distance metric.
         active_targets = [t.track_id for t in self.tracks if t.is_confirmed()]
         features, targets = [], []
+        face_features, face_targets = [], []
         for track in self.tracks:
             if not track.is_confirmed():
                 continue
             features += track.features
             targets += [track.track_id for _ in track.features]
             track.features = []
+            if self.face_metric is not None:
+                face_features += track.face_features
+                face_targets += [track.track_id for _ in track.face_features]
+                track.face_features = []
         self.metric.partial_fit(np.asarray(features), np.asarray(targets), active_targets)
+        if self.face_metric is not None:
+            self.face_metric.partial_fit(
+                np.asarray(face_features), np.asarray(face_targets), active_targets
+            )
+
+    def _advance_lost_tracks(self):
+        """Age and prune tracks that have already exceeded MAX_AGE."""
+        for record in self.lost_tracks:
+            record['lost_frames'] += 1
+        self.lost_tracks = [
+            record for record in self.lost_tracks
+            if record['lost_frames'] <= self.lost_track_ttl
+        ]
+
+    def _store_lost_track(self, track):
+        """Save a confirmed track's galleries before removing it from active tracks."""
+        if track.state != TrackState.Confirmed:
+            return
+        if any(record['track_id'] == track.track_id for record in self.lost_tracks):
+            return
+        self.lost_tracks.append({
+            'track_id': track.track_id,
+            'class_id': track.class_id,
+            'hits': track.hits,
+            'lost_frames': 0,
+            'features': [
+                np.asarray(feature, dtype=np.float32).copy()
+                for feature in self.metric.samples.get(track.track_id, track.features)
+            ],
+            'face_features': [
+                np.asarray(feature, dtype=np.float32).copy()
+                for feature in (
+                    self.face_metric.samples.get(track.track_id, track.face_features)
+                    if self.face_metric is not None else []
+                )
+            ],
+        })
+
+    def _lost_cost_metric(self, records, dets, record_indices, detection_indices):
+        """Calculate appearance-only costs for reactivating lost tracks."""
+        cost_matrix = np.full(
+            (len(record_indices), len(detection_indices)), linear_assignment.INFTY_COST,
+            dtype=np.float32,
+        )
+        for row, record_idx in enumerate(record_indices):
+            record = records[record_idx]
+            body_gallery = record['features']
+            if not body_gallery:
+                continue
+            for col, detection_idx in enumerate(detection_indices):
+                detection = dets[detection_idx]
+                body_cost = float(
+                    self.metric._metric(
+                        np.asarray(body_gallery),
+                        np.asarray([detection.feature], dtype=np.float32),
+                    )[0]
+                )
+                cost = body_cost
+                face_feature = detection.face_feature
+                face_gallery = record['face_features']
+                if self.face_metric is not None and face_feature is not None and face_gallery:
+                    face_cost = float(
+                        self.face_metric._metric(
+                            np.asarray(face_gallery),
+                            np.asarray([face_feature], dtype=np.float32),
+                        )[0]
+                    )
+                    cost = (
+                        (1 - self.face_weight) * body_cost
+                        + self.face_weight * face_cost
+                    )
+                    body_bad = body_cost > self.metric.matching_threshold
+                    face_bad = face_cost > self.face_metric.matching_threshold
+                    if body_bad and face_bad:
+                        continue
+                elif body_cost > self.metric.matching_threshold:
+                    continue
+                cost_matrix[row, col] = cost
+        return cost_matrix
+
+    def _match_lost_tracks(self, detections, detection_indices):
+        if not self.lost_tracks or not detection_indices:
+            return [], detection_indices
+        candidate_indices = list(range(len(self.lost_tracks)))
+        matches, _, unmatched_detections = linear_assignment.min_cost_matching(
+            self._lost_cost_metric,
+            linear_assignment.INFTY_COST - 1,
+            self.lost_tracks,
+            detections,
+            candidate_indices,
+            detection_indices,
+        )
+        return matches, unmatched_detections
+
+    def _reactivate_track(self, record, detection, class_id):
+        mean, covariance = self.kf.initiate(detection.to_xyah())
+        track = Track(
+            mean, covariance, record['track_id'], class_id, self.n_init, self.max_age,
+            detection.feature, detection.face_feature,
+        )
+        track.state = TrackState.Confirmed
+        track.hits = max(record['hits'] + 1, self.n_init)
+        track.features = record['features'] + [detection.feature]
+        track.face_features = record['face_features'][:]
+        if detection.face_feature is not None:
+            track.face_features.append(detection.face_feature)
+        self.tracks.append(track)
+
+    def _face_cost_metric(self, tracks, dets, track_indices, detection_indices):
+        """Return face costs where both the track and detection have a face feature."""
+        cost_matrix = np.full(
+            (len(track_indices), len(detection_indices)), np.nan, dtype=np.float32
+        )
+        if self.face_metric is None:
+            return cost_matrix
+
+        track_rows = []
+        target_ids = []
+        for row, track_idx in enumerate(track_indices):
+            track_id = tracks[track_idx].track_id
+            if track_id in self.face_metric.samples:
+                track_rows.append(row)
+                target_ids.append(track_id)
+
+        detection_cols = []
+        face_features = []
+        for col, detection_idx in enumerate(detection_indices):
+            face_feature = dets[detection_idx].face_feature
+            if face_feature is not None and np.asarray(face_feature).size > 0:
+                detection_cols.append(col)
+                face_features.append(face_feature)
+
+        if not track_rows or not detection_cols:
+            return cost_matrix
+
+        face_cost = self.face_metric.distance(
+            np.asarray(face_features, dtype=np.float32), np.asarray(target_ids)
+        )
+        cost_matrix[np.ix_(track_rows, detection_cols)] = face_cost
+        return cost_matrix
 
     def _full_cost_metric(self, tracks, dets, track_indices, detection_indices):
         """
@@ -121,9 +297,37 @@ class Tracker:
             np.array([tracks[i].track_id for i in track_indices]),
         )
         app_gate = app_cost > self.metric.matching_threshold
-        # Now combine and threshold
+        face_cost = self._face_cost_metric(
+            tracks, dets, track_indices, detection_indices
+        )
+        face_available = np.isfinite(face_cost)
+        face_gate = np.zeros_like(face_available)
+        if self.face_metric is not None and np.any(face_available):
+            face_gate[face_available] = (
+                face_cost[face_available] > self.face_metric.matching_threshold
+            )
+        # Combine motion and appearance costs
         cost_matrix = self._lambda * pos_cost + (1 - self._lambda) * app_cost
-        cost_matrix[np.logical_or(pos_gate, app_gate)] = linear_assignment.INFTY_COST
+        if np.any(face_available):
+            cost_matrix[face_available] = (
+                (1 - self.face_weight) * app_cost[face_available]
+                + self.face_weight * face_cost[face_available]
+            )
+        # Age-adaptive gating:
+        # For recently observed tracks, use both motion and appearance gating.
+        # For stale tracks, Kalman prediction may have drifted, so rely mainly
+        # on appearance features for re-association.
+        for row, track_idx in enumerate(track_indices):
+            time_lost = tracks[track_idx].time_since_update
+            invalid = app_gate[row].copy()
+            # When a reliable face exists, either body or face appearance may
+            # rescue the other modality; missing faces fall back to body ReID.
+            invalid[face_available[row]] &= face_gate[row][face_available[row]]
+            if time_lost <= 10:
+                # Recent track: require both reasonable position and appearance.
+                invalid |= pos_gate[row]
+            # Stale track: ignore unreliable position gate and use appearance.
+            cost_matrix[row, invalid] = linear_assignment.INFTY_COST
         # Return Matrix
         return cost_matrix
 
@@ -166,5 +370,5 @@ class Tracker:
         mean, covariance = self.kf.initiate(detection.to_xyah())
         self.tracks.append(Track(
             mean, covariance, self._next_id, class_id, self.n_init, self.max_age,
-            detection.feature))
+            detection.feature, detection.face_feature))
         self._next_id += 1

@@ -141,7 +141,7 @@ class NearestNeighborDistanceMetric(object):
             self.samples.setdefault(target, []).append(feature)
             if self.budget is not None:
                 self.samples[target] = self.samples[target][-self.budget:]
-        self.samples = {k: self.samples[k] for k in active_targets}
+        self.samples = {k: self.samples[k] for k in active_targets if k in self.samples}
 
     def distance(self, features, targets):
         """Compute distance between features and targets.
@@ -160,5 +160,5 @@ class NearestNeighborDistanceMetric(object):
         """
         cost_matrix = np.zeros((len(targets), len(features)))
         for i, target in enumerate(targets):
-            cost_matrix= self._metric(self.samples[target], features)
+            cost_matrix[i, :] = self._metric(self.samples[target], features)
         return cost_matrix

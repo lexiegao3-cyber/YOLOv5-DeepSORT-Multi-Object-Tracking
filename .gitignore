@@ -1,1 +1,8 @@
 .vscode/
+
+# Downloaded model weights (fetch them at runtime instead of committing large binaries).
+*.pt
+*.pth
+
+# Local backup created during tracker experiments.
+deep_sort/sort/tracker_backup.py
