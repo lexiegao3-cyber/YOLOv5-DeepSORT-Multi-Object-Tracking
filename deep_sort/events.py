@@ -101,6 +101,7 @@ class EventDetector:
         loitering_enabled=True,
         loitering_duration=10.0,
         loitering_max_movement=60.0,
+        loitering_max_step_movement=0.08,
         loitering_require_zone=True,
         history_size=120,
         track_ttl=90,
@@ -113,6 +114,7 @@ class EventDetector:
         self.loitering_enabled = bool(loitering_enabled)
         self.loitering_duration = float(loitering_duration)
         self.loitering_max_movement = float(loitering_max_movement)
+        self.loitering_max_step_movement = max(float(loitering_max_step_movement), 0.0)
         self.loitering_require_zone = bool(loitering_require_zone)
         self.history_size = max(int(history_size), 2)
         self.track_ttl = max(int(track_ttl), 1)
@@ -148,6 +150,8 @@ class EventDetector:
                     "anchor": None,
                     "stable_since": None,
                     "loitering_alerted": False,
+                    "previous_motion_point": None,
+                    "previous_motion_frame": None,
                 },
             )
             state["history"].append((current_frame, event_point))
@@ -178,8 +182,28 @@ class EventDetector:
                     if self.coordinate_mapper is not None else event_point
                 )
                 point = np.asarray(motion_point, dtype=np.float32)
+                previous_point = state["previous_motion_point"]
+                previous_frame = state["previous_motion_frame"]
+                step_distance = None
+                if previous_point is not None and previous_frame is not None:
+                    frame_gap = max(current_frame - previous_frame, 1)
+                    step_distance = np.linalg.norm(point - previous_point) / frame_gap
+                state["previous_motion_point"] = point
+                state["previous_motion_frame"] = current_frame
                 anchor = state["anchor"]
-                if anchor is None or np.linalg.norm(point - anchor) > self.loitering_max_movement:
+                # A person who keeps walking through the zone must not be
+                # classified as loitering just because the path curves. Start
+                # the dwell timer only after per-frame movement drops below
+                # the configured stop threshold.
+                is_moving = (
+                    step_distance is not None
+                    and step_distance > self.loitering_max_step_movement
+                )
+                if (
+                    is_moving
+                    or anchor is None
+                    or np.linalg.norm(point - anchor) > self.loitering_max_movement
+                ):
                     state["anchor"] = point
                     state["stable_since"] = current_frame
                     state["loitering_alerted"] = False
@@ -230,9 +254,12 @@ class EventDetector:
         for zone in self.zones:
             zone.draw(frame)
 
+        watchlist_filter = watchlist_statuses is not None
         watchlist_statuses = watchlist_statuses or {}
         current_frame = int(frame_idx) if frame_idx is not None else None
         for track_id, state in self.track_states.items():
+            if watchlist_filter and track_id not in watchlist_statuses:
+                continue
             if current_frame is not None and current_frame - state.get("last_frame", current_frame) > self.track_ttl:
                 continue
             points = list(state["history"])
@@ -251,11 +278,13 @@ class EventDetector:
             )
 
         for track_id, status in statuses.items():
+            if watchlist_filter and track_id not in watchlist_statuses:
+                continue
             if status["inside_zones"]:
-                label = f"ID {track_id} INTRUSION"
+                label = f"WATCHLIST ID {track_id} IN ZONE"
                 color = (0, 0, 255)
                 if status["loitering"]:
-                    label = f"ID {track_id} LOITERING"
+                    label = f"WATCHLIST ID {track_id} LOITERING"
                     color = (0, 0, 255)
                 x1, y1, _, _ = status["bbox"]
                 cv2.putText(frame, label, (x1, max(y1 - 8, 20)),
@@ -264,6 +293,8 @@ class EventDetector:
         if events:
             y = 30
             for event in events:
+                if watchlist_filter and int(event["track_id"]) not in watchlist_statuses:
+                    continue
                 label = f"ALERT: {event['event'].upper()} - ID {event['track_id']}"
                 cv2.putText(frame, label, (15, y), cv2.FONT_HERSHEY_SIMPLEX,
                             0.7, (0, 0, 255), 2, cv2.LINE_AA)
@@ -314,6 +345,9 @@ def load_event_config(config):
         loitering_max_movement=_value(
             loiter_cfg, "MAX_MOVEMENT_UNITS",
             _value(loiter_cfg, "MAX_MOVEMENT_PIXELS", 60.0),
+        ),
+        loitering_max_step_movement=_value(
+            loiter_cfg, "MAX_STEP_MOVEMENT_UNITS", 0.08
         ),
         loitering_require_zone=_value(loiter_cfg, "REQUIRE_RESTRICTED_ZONE", True),
         history_size=_value(events_cfg, "TRAJECTORY_HISTORY_FRAMES", 120),

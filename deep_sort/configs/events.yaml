@@ -10,12 +10,14 @@ EVENTS:
     IMAGE_POINTS: [[300, 520], [1620, 520], [1900, 1080], [100, 1080]]
     WORLD_POINTS: [[0, 0], [20, 0], [20, 12], [0, 12]]
 
-  # Polygon points are now floor/world coordinates, not image pixels.
+  # Ticket-machine floor area. This projects to approximately
+  # image pixels [(430,650), (700,650), (780,980), (340,980)].
+  # Polygon points are floor/world coordinates, not image pixels.
   # COLOR uses OpenCV BGR order: [0, 0, 255] is red.
   ZONES:
     - NAME: "restricted_zone"
       COLOR: [0, 0, 255]
-      POLYGON: [[12, 2], [18, 2], [18, 9], [12, 9]]
+      POLYGON: [[2.47, 3.50], [6.24, 3.50], [7.52, 10.35], [2.38, 10.35]]
 
   TRAJECTORY_HISTORY_FRAMES: 120
   TRACK_STATE_TTL_FRAMES: 90
@@ -26,5 +28,8 @@ EVENTS:
     ENABLED: true
     MIN_DURATION_SECONDS: 10.0
     MAX_MOVEMENT_UNITS: 1.5
+    # Per-frame movement below this value starts the dwell timer. A person
+    # continuously walking through the area will not trigger loitering.
+    MAX_STEP_MOVEMENT_UNITS: 0.08
     # When true, a person must be inside one of the configured zones.
     REQUIRE_RESTRICTED_ZONE: true

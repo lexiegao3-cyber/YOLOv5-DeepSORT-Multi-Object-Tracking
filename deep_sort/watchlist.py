@@ -69,6 +69,8 @@ class WatchlistDB:
             """
         )
         self.connection.commit()
+        # Candidate evidence is accumulated per current tracker ID. Automatic
+        # promotion requires both zone entry and loitering evidence.
         self.candidates = {}
         # Track IDs are only meaningful inside the current process. Never use
         # the persisted last_track_id as an identity across a new run.
@@ -234,13 +236,19 @@ class WatchlistDB:
             if target_id is not None:
                 self._record_event(target_id, event)
             else:
-                key = (track_id, event["event"])
-                self.candidates[key] = self.candidates.get(key, 0) + 1
-                threshold = (
-                    self.min_intrusions if event["event"] == "restricted_area_intrusion"
-                    else self.min_loitering
+                track_id = int(track_id)
+                evidence = self.candidates.setdefault(
+                    track_id, {"intrusions": 0, "loitering": 0}
                 )
-                if self.candidates[key] >= threshold and track_id in profiles:
+                if event["event"] == "restricted_area_intrusion":
+                    evidence["intrusions"] += 1
+                elif event["event"] == "loitering":
+                    evidence["loitering"] += 1
+                if (
+                    evidence["intrusions"] >= self.min_intrusions
+                    and evidence["loitering"] >= self.min_loitering
+                    and track_id in profiles
+                ):
                     target = self._create_target(
                         track_id, profiles[track_id], f"auto_{event['event']}",
                     )

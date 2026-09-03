@@ -107,13 +107,15 @@ python track.py \
 
 ## Restricted-area intrusion and loitering detection
 
-Event detection is enabled by default. Edit
-`deep_sort/configs/events.yaml` and replace the example polygon with points
-from the camera's original image. The example uses OpenCV BGR color
-`[0, 0, 255]`, which is red. A person's bounding-box center entering a zone
-creates one `restricted_area_intrusion` event. If the person remains inside
-the zone with movement below `MAX_MOVEMENT_PIXELS` for
-`MIN_DURATION_SECONDS`, one `loitering` event is generated.
+Event detection is enabled by default. The default
+`deep_sort/configs/events.yaml` marks the floor area in front of the ticket
+machines in `img1.mp4`. It uses OpenCV BGR color `[0, 0, 255]`, which is red.
+Because the configuration uses the calibrated ground plane, edit the four
+calibration points first when using another camera, then define the restricted
+polygon in the corresponding world coordinates. A person's footpoint entering
+a zone creates one `restricted_area_intrusion` event. If the person then stops
+or moves only minimally inside the zone for `MIN_DURATION_SECONDS`, one
+`loitering` event is generated.
 
 ```bash
 python track.py --source 0 \
@@ -122,9 +124,12 @@ python track.py --source 0 \
   --show-vid
 ```
 
-The overlay draws the configured zone, each track's trajectory and the active
-`INTRUSION` or `LOITERING` label. Events are also logged as one JSON object per
-line. Use `--no-events` to run tracking without the event layer.
+The default zone is the floor area in front of the left-side ticket machines
+in `img1.mp4`. The overlay draws trajectories only for watchlist targets;
+ordinary tracks remain uncluttered. Automatic promotion requires both a zone
+entry and loitering evidence: a person who simply walks through the zone stays
+green and is not classified as a suspect. Events are also logged as one JSON
+object per line. Use `--no-events` to run tracking without the event layer.
 
 ### Perspective-aware ground-plane zones
 
@@ -171,8 +176,10 @@ embeddings, event counts and last-seen time. The current DeepSORT ID is shown
 alongside the persistent watchlist ID, so a later tracker-ID change does not
 lose the target's history.
 
-By default, three restricted-area intrusions or one loitering event promote a
-target automatically. To manually lock a currently visible tracker ID:
+By default, one restricted-area entry and one loitering event are both required
+to promote a target automatically. Continuous walking does not start the
+loitering timer; movement must fall below `MAX_STEP_MOVEMENT_UNITS` for the
+configured dwell duration. To manually lock a currently visible tracker ID:
 
 ```bash
 python track.py \

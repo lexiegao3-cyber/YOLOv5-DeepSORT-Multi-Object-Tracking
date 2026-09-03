@@ -358,14 +358,14 @@ def detect(opt):
             if event_detectors[i] is not None:
                 im0 = event_detectors[i].draw(
                     im0, current_statuses, current_events, frame_idx + 1,
-                    display_watchlist_statuses,
+                    display_watchlist_statuses if watchlist is not None else None,
                 )
             if save_vid or show_vid:
                 for output in display_outputs[i]:
                     bboxes = output[0:4]
                     track_id = int(output[4])
                     class_id = int(output[5])
-                    target = display_watchlist_statuses.get(track_id)
+                    target = (display_watchlist_statuses or {}).get(track_id)
                     color = (0, 0, 255) if target is not None else (0, 255, 0)
                     label = (
                         f"{target['label']} / ID {track_id}"
@@ -452,8 +452,8 @@ if __name__ == '__main__':
                         help='manually lock this current tracker ID into the watchlist')
     parser.add_argument('--watch-label', type=str, default='suspect',
                         help='label assigned to a manually locked target')
-    parser.add_argument('--watch-min-intrusions', type=int, default=3,
-                        help='intrusion events required for automatic watchlist promotion')
+    parser.add_argument('--watch-min-intrusions', type=int, default=1,
+                        help='zone-entry events required alongside loitering for automatic promotion')
     parser.add_argument('--watch-min-loitering', type=int, default=1,
                         help='loitering events required for automatic watchlist promotion')
     parser.add_argument('--watch-body-threshold', type=float, default=0.35,
