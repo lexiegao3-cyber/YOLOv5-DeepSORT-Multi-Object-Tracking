@@ -30,12 +30,27 @@ from yolov5.utils.torch_utils import select_device, time_sync
 from yolov5.utils.plots import Annotator, colors, save_one_box
 from deep_sort.utils.parser import get_config
 from deep_sort.deep_sort import DeepSort
+from deep_sort.events import EventLogger, load_event_config
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # yolov5 deepsort root directory
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
+
+
+def resolve_mot_image_dir(root, dataset, split, sequence):
+    """Resolve standard MOT17/MOT20/<split>/<sequence>/img1 input."""
+    root = Path(root).expanduser().resolve()
+    candidates = [root / dataset / split, root / split]
+    if root.name.lower() == split.lower():
+        candidates.insert(0, root)
+    for split_root in candidates:
+        image_dir = split_root / sequence / 'img1'
+        if image_dir.is_dir():
+            return image_dir
+    expected = [str(path / sequence / 'img1') for path in candidates]
+    raise FileNotFoundError('MOT sequence not found. Expected: ' + ', '.join(expected))
 
 
 def detect(opt):
@@ -120,6 +135,14 @@ def detect(opt):
         )
     outputs = [None] * nr_sources
 
+    event_detectors = [None] * nr_sources
+    event_logger = EventLogger(opt.event_log)
+    if not opt.no_events:
+        event_cfg = get_config()
+        event_cfg.merge_from_file(opt.event_config)
+        if event_cfg.get('EVENTS', {}).get('ENABLED', True):
+            event_detectors = [load_event_config(event_cfg) for _ in range(nr_sources)]
+
     # Get names and colors
     names = model.module.names if hasattr(model, 'module') else model.names
 
@@ -167,11 +190,15 @@ def detect(opt):
                     txt_file_name = p.parent.name  # get folder name containing current img
                     save_path = str(save_dir / p.parent.name)  # im.jpg, vid.mp4, ...
 
+            if opt.mot_sequence:
+                txt_file_name = opt.mot_sequence
             txt_path = str(save_dir / 'tracks' / txt_file_name)  # im.txt
             s += '%gx%g ' % im.shape[2:]  # print string
             imc = im0.copy() if save_crop else im0  # for save_crop
 
             annotator = Annotator(im0, line_width=2, pil=not ascii)
+            current_events = []
+            current_statuses = {}
 
             if det is not None and len(det):
                 # Rescale boxes from img_size to im0 size
@@ -194,7 +221,7 @@ def detect(opt):
 
                 # draw boxes for visualization
                 if len(outputs[i]) > 0:
-                    for j, (output, conf) in enumerate(zip(outputs[i], confs)):
+                    for j, output in enumerate(outputs[i]):
 
                         bboxes = output[0:4]
                         id = output[4]
@@ -206,14 +233,17 @@ def detect(opt):
                             bbox_top = output[1]
                             bbox_w = output[2] - output[0]
                             bbox_h = output[3] - output[1]
-                            # Write MOT compliant results to file
+                            # Write MOTChallenge result format:
+                            # frame, id, left, top, width, height, confidence, x, y, z
                             with open(txt_path + '.txt', 'a') as f:
-                                f.write(('%g ' * 10 + '\n') % (frame_idx + 1, id, bbox_left,  # MOT format
-                                                               bbox_top, bbox_w, bbox_h, -1, -1, -1, i))
+                                f.write(('%g ' * 10 + '\n') % (
+                                    frame_idx + 1, id, bbox_left, bbox_top,
+                                    bbox_w, bbox_h, -1, -1, -1, -1
+                                ))
 
                         if save_vid or save_crop or show_vid:  # Add bbox to image
                             c = int(cls)  # integer class
-                            label = f'{id} {names[c]} {conf:.2f}'
+                            label = f'{id} {names[c]}'
                             annotator.box_label(bboxes, label, color=colors(c, True))
                             if save_crop:
                                 txt_file_name = txt_file_name if (isinstance(path, list) and len(path) > 1) else ''
@@ -222,11 +252,31 @@ def detect(opt):
                 LOGGER.info(f'{s}Done. YOLO:({t3 - t2:.3f}s), DeepSort:({t5 - t4:.3f}s)')
 
             else:
+                outputs[i] = np.empty((0, 6), dtype=int)
                 deepsort_list[i].increment_ages()
                 LOGGER.info('No detections')
 
+            if event_detectors[i] is not None:
+                if vid_cap is not None:
+                    fps = float(vid_cap.get(cv2.CAP_PROP_FPS) or 0.0)
+                elif webcam:
+                    fps = 30.0
+                else:
+                    fps = opt.fps
+                current_events, current_statuses = event_detectors[i].update(
+                    outputs[i], frame_idx + 1, fps=fps
+                )
+                for event in current_events:
+                    LOGGER.warning(
+                        'EVENT %s: ID %s%s', event['event'], event['track_id'],
+                        f" in {event['zone']}" if event['zone'] else ''
+                    )
+                    event_logger.write([event])
+
             # Stream results
             im0 = annotator.result()
+            if event_detectors[i] is not None:
+                im0 = event_detectors[i].draw(im0, current_statuses, current_events)
             if show_vid:
                 cv2.imshow(str(p), im0)
                 cv2.waitKey(1)  # 1 millisecond
@@ -284,11 +334,34 @@ if __name__ == '__main__':
     parser.add_argument('--max-det', type=int, default=1000, help='maximum detection per image')
     parser.add_argument('--save-crop', action='store_true', help='save cropped prediction boxes')
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
+    parser.add_argument('--event-config', type=str, default='deep_sort/configs/events.yaml',
+                        help='restricted-area and loitering event configuration')
+    parser.add_argument('--event-log', type=str, default='',
+                        help='optional JSONL file for intrusion/loitering events')
+    parser.add_argument('--no-events', action='store_true', help='disable event detection and drawing')
+    parser.add_argument('--fps', type=float, default=15.0,
+                        help='FPS used for image folders and MOT sequences')
+    parser.add_argument('--mot-root', type=str, default='',
+                        help='MOT17/MOT20 root; enables standard sequence input')
+    parser.add_argument('--mot-dataset', choices=['MOT17', 'MOT20'], default='MOT17')
+    parser.add_argument('--mot-split', choices=['train', 'test'], default='train')
+    parser.add_argument('--mot-sequence', type=str, default='',
+                        help='MOT sequence name, for example MOT17-04-SDP')
     parser.add_argument('--project', default=ROOT / 'runs/track', help='save results to project/name')
     parser.add_argument('--name', default='exp', help='save results to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
+
+    if opt.mot_root:
+        if not opt.mot_sequence:
+            parser.error('--mot-sequence is required when --mot-root is used')
+        opt.source = str(resolve_mot_image_dir(
+            opt.mot_root, opt.mot_dataset, opt.mot_split, opt.mot_sequence
+        ))
+        opt.save_txt = True
+        if opt.classes is None:
+            opt.classes = [0]
 
     with torch.no_grad():
         detect(opt)

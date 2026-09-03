@@ -1,0 +1,20 @@
+EVENTS:
+  ENABLED: true
+
+  # Polygon points are [x, y] pixel coordinates in the original image.
+  # Replace these example points with the restricted area in your camera view.
+  # COLOR uses OpenCV BGR order: [0, 0, 255] is red.
+  ZONES:
+    - NAME: "restricted_zone"
+      COLOR: [0, 0, 255]
+      POLYGON: [[480, 180], [620, 180], [620, 420], [480, 420]]
+
+  TRAJECTORY_HISTORY_FRAMES: 120
+  TRACK_STATE_TTL_FRAMES: 90
+
+  LOITERING:
+    ENABLED: true
+    MIN_DURATION_SECONDS: 10.0
+    MAX_MOVEMENT_PIXELS: 60.0
+    # When true, a person must be inside one of the configured zones.
+    REQUIRE_RESTRICTED_ZONE: true

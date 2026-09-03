@@ -6,3 +6,12 @@
 
 # Local backup created during tracker experiments.
 deep_sort/sort/tracker_backup.py
+
+# Local benchmark data and generated runs.
+MOT17/
+MOT20/
+mot_data/
+runs/
+*.jsonl
+__pycache__/
+*.py[cod]

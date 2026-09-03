@@ -59,6 +59,65 @@ $ python track.py --source 0  # webcam
                            'rtsp://example.com/media.mp4'  # RTSP, RTMP, HTTP stream
 ```
 
+## MOT17 / MOT20 benchmark data
+
+The project accepts the standard MOTChallenge image layout and keeps benchmark
+data outside the repository. Download the training or test archive from the
+[MOT17 data page](https://motchallenge.net/data/MOT17/) or the
+[MOT20 data page](https://motchallenge.net/data/MOT20/), then extract it as:
+
+```text
+mot_data/
+├── MOT17/
+│   ├── train/MOT17-04-SDP/img1/000001.jpg
+│   └── test/MOT17-01-SDP/img1/000001.jpg
+└── MOT20/
+    └── train/MOT20-01/img1/000001.jpg
+```
+
+Validate a local download and create a manifest:
+
+```bash
+python tools/prepare_mot.py --root mot_data --dataset MOT17 --split train
+python tools/prepare_mot.py --root mot_data --dataset MOT20 --split train
+```
+
+Run one MOT sequence. MOT sequences are pedestrian-only, so class 0 is
+selected automatically and MOT-format results are written to `tracks/`:
+
+```bash
+python track.py \
+  --mot-root mot_data \
+  --mot-dataset MOT17 \
+  --mot-split train \
+  --mot-sequence MOT17-04-SDP \
+  --yolo_model yolov5s.pt \
+  --deep_sort_model resnet50_MSMT17 \
+  --device cpu \
+  --save-vid
+```
+
+## Restricted-area intrusion and loitering detection
+
+Event detection is enabled by default. Edit
+`deep_sort/configs/events.yaml` and replace the example polygon with points
+from the camera's original image. The example uses OpenCV BGR color
+`[0, 0, 255]`, which is red. A person's bounding-box center entering a zone
+creates one `restricted_area_intrusion` event. If the person remains inside
+the zone with movement below `MAX_MOVEMENT_PIXELS` for
+`MIN_DURATION_SECONDS`, one `loitering` event is generated.
+
+```bash
+python track.py --source 0 \
+  --event-config deep_sort/configs/events.yaml \
+  --event-log runs/events.jsonl \
+  --show-vid
+```
+
+The overlay draws the configured zone, each track's trajectory and the active
+`INTRUSION` or `LOITERING` label. Events are also logged as one JSON object per
+line. Use `--no-events` to run tracking without the event layer.
+
 
 ## Select object detection and ReID model
 
