@@ -225,11 +225,12 @@ class EventDetector:
             "center": [round(float(center[0]), 2), round(float(center[1]), 2)],
         }
 
-    def draw(self, frame, statuses, events=None, frame_idx=None):
+    def draw(self, frame, statuses, events=None, frame_idx=None, watchlist_statuses=None):
         """Draw zones, trajectories and current event labels on ``frame``."""
         for zone in self.zones:
             zone.draw(frame)
 
+        watchlist_statuses = watchlist_statuses or {}
         current_frame = int(frame_idx) if frame_idx is not None else None
         for track_id, state in self.track_states.items():
             if current_frame is not None and current_frame - state.get("last_frame", current_frame) > self.track_ttl:
@@ -238,10 +239,16 @@ class EventDetector:
             segment = []
             for index, item in enumerate(points):
                 if index and not self._trajectory_link_allowed(points[index - 1], item):
-                    self._draw_trajectory_segment(frame, segment, track_id)
+                    self._draw_trajectory_segment(
+                        frame, segment, track_id,
+                        (0, 0, 255) if track_id in watchlist_statuses else (0, 255, 0),
+                    )
                     segment = []
                 segment.append(item[1])
-            self._draw_trajectory_segment(frame, segment, track_id)
+            self._draw_trajectory_segment(
+                frame, segment, track_id,
+                (0, 0, 255) if track_id in watchlist_statuses else (0, 255, 0),
+            )
 
         for track_id, status in statuses.items():
             if status["inside_zones"]:
@@ -272,20 +279,12 @@ class EventDetector:
         distance = np.linalg.norm(np.asarray(current_point) - np.asarray(previous_point))
         return distance <= self.trajectory_max_jump * gap
 
-    @staticmethod
-    def _track_color(track_id):
-        return (
-            int((37 * int(track_id) + 80) % 180 + 60),
-            int((67 * int(track_id) + 50) % 180 + 60),
-            int((97 * int(track_id) + 20) % 180 + 60),
-        )
-
-    def _draw_trajectory_segment(self, frame, points, track_id):
+    def _draw_trajectory_segment(self, frame, points, track_id, color):
         if len(points) < 2:
             return
         history = np.asarray(points, dtype=np.int32)
         cv2.polylines(frame, [history.reshape((-1, 1, 2))], False,
-                      self._track_color(track_id), 2, cv2.LINE_AA)
+                      color, 2, cv2.LINE_AA)
 
 
 def load_event_config(config):

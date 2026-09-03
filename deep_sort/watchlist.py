@@ -106,6 +106,13 @@ class WatchlistDB:
         ).fetchone()
         return self._row_to_target(row)
 
+    def status_for_track(self, track_id):
+        """Return the persistent watchlist label currently bound to a track."""
+        target = self._find_by_track_id(track_id)
+        if target is None:
+            return None
+        return {"target_id": target["target_id"], "label": f"WATCHLIST-{target['target_id']}"}
+
     def _match_embeddings(self, body_feature, face_feature):
         body_feature = _normalise(body_feature)
         face_feature = _normalise(face_feature)

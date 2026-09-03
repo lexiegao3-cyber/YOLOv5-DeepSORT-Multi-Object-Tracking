@@ -190,6 +190,11 @@ database is intentionally local and is ignored by Git. Embedding matches are
 assistive evidence rather than proof of identity; confirm a target before
 taking action, especially in crowded or low-resolution scenes.
 
+Tracked boxes and paths are rendered green by default. A watchlist target is
+rendered red and remains visible for short detector gaps using the tracker's
+predicted box. The default is 15 missed frames; adjust it with
+`--display-track-age` when the camera frame rate or scene speed requires it.
+
 
 ## Select object detection and ReID model
 

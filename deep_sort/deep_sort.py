@@ -169,6 +169,18 @@ class DeepSort(object):
             if face_gallery else None,
         }
 
+    def get_predicted_outputs(self, max_time_since_update=15):
+        """Return confirmed tracks for visualization during short detector misses."""
+        outputs = []
+        for track in self.tracker.tracks:
+            if not track.is_confirmed() or track.time_since_update > max_time_since_update:
+                continue
+            x1, y1, x2, y2 = self._tlwh_to_xyxy(track.to_tlwh())
+            outputs.append(np.array([
+                x1, y1, x2, y2, track.track_id, track.class_id
+            ], dtype=int))
+        return np.stack(outputs, axis=0) if outputs else np.empty((0, 6), dtype=int)
+
     def _xyxy_to_tlwh(self, bbox_xyxy):
         x1, y1, x2, y2 = bbox_xyxy
 

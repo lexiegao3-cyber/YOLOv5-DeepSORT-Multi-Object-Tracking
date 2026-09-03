@@ -178,6 +178,7 @@ def detect(opt):
             )
         )
     outputs = [None] * nr_sources
+    display_outputs = [None] * nr_sources
 
     event_detectors = [None] * nr_sources
     event_logger = EventLogger(opt.event_log)
@@ -275,35 +276,30 @@ def detect(opt):
                 t5 = time_sync()
                 dt[3] += t5 - t4
 
-                # draw boxes for visualization
                 if len(outputs[i]) > 0:
-                    for j, output in enumerate(outputs[i]):
-
-                        bboxes = output[0:4]
-                        id = output[4]
-                        cls = output[5]
-
+                    for output in outputs[i]:
+                        track_id = output[4]
                         if save_txt:
-                            # to MOT format
                             bbox_left = output[0]
                             bbox_top = output[1]
                             bbox_w = output[2] - output[0]
                             bbox_h = output[3] - output[1]
-                            # Write MOTChallenge result format:
+                            # MOTChallenge result format:
                             # frame, id, left, top, width, height, confidence, x, y, z
                             with open(txt_path + '.txt', 'a') as f:
                                 f.write(('%g ' * 10 + '\n') % (
-                                    frame_idx + 1, id, bbox_left, bbox_top,
+                                    frame_idx + 1, track_id, bbox_left, bbox_top,
                                     bbox_w, bbox_h, -1, -1, -1, -1
                                 ))
 
-                        if save_vid or save_crop or show_vid:  # Add bbox to image
-                            c = int(cls)  # integer class
-                            label = f'{id} {names[c]}'
-                            annotator.box_label(bboxes, label, color=colors(c, True))
-                            if save_crop:
-                                txt_file_name = txt_file_name if (isinstance(path, list) and len(path) > 1) else ''
-                                save_one_box(bboxes, imc, file=save_dir / 'crops' / txt_file_name / names[c] / f'{id}' / f'{p.stem}.jpg', BGR=True)
+                        if save_crop:
+                            c = int(output[5])
+                            crop_name = txt_file_name if (isinstance(path, list) and len(path) > 1) else ''
+                            save_one_box(
+                                output[0:4], imc,
+                                file=save_dir / 'crops' / crop_name / names[c] / f'{track_id}' / f'{p.stem}.jpg',
+                                BGR=True,
+                            )
 
                 LOGGER.info(f'{s}Done. YOLO:({t3 - t2:.3f}s), DeepSort:({t5 - t4:.3f}s)')
 
@@ -345,21 +341,37 @@ def detect(opt):
                 )
                 event_logger.write([event])
 
+            display_outputs[i] = deepsort_list[i].get_predicted_outputs(
+                opt.display_track_age
+            )
+            display_watchlist_statuses = dict(watchlist_statuses)
+            if watchlist is not None:
+                for output in display_outputs[i]:
+                    track_id = int(output[4])
+                    if track_id not in display_watchlist_statuses:
+                        target = watchlist.status_for_track(track_id)
+                        if target is not None:
+                            display_watchlist_statuses[track_id] = target
+
             # Stream results
             im0 = annotator.result()
             if event_detectors[i] is not None:
                 im0 = event_detectors[i].draw(
-                    im0, current_statuses, current_events, frame_idx + 1
+                    im0, current_statuses, current_events, frame_idx + 1,
+                    display_watchlist_statuses,
                 )
-            for output in outputs[i]:
-                target = watchlist_statuses.get(int(output[4]))
-                if target is not None:
-                    x1, y1 = int(output[0]), int(output[1])
-                    cv2.putText(
-                        im0, f"{target['label']} / ID {int(output[4])}",
-                        (x1, max(y1 - 28, 20)), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.65, (0, 0, 255), 2, cv2.LINE_AA,
+            if save_vid or show_vid:
+                for output in display_outputs[i]:
+                    bboxes = output[0:4]
+                    track_id = int(output[4])
+                    class_id = int(output[5])
+                    target = display_watchlist_statuses.get(track_id)
+                    color = (0, 0, 255) if target is not None else (0, 255, 0)
+                    label = (
+                        f"{target['label']} / ID {track_id}"
+                        if target is not None else f"ID {track_id} {names[class_id]}"
                     )
+                    annotator.box_label(bboxes, label, color=color)
             if show_vid:
                 cv2.imshow(str(p), im0)
                 cv2.waitKey(1)  # 1 millisecond
@@ -448,6 +460,8 @@ if __name__ == '__main__':
                         help='cosine distance threshold for body ReID watchlist matching')
     parser.add_argument('--watch-face-threshold', type=float, default=0.40,
                         help='cosine distance threshold for face ReID watchlist matching')
+    parser.add_argument('--display-track-age', type=int, default=15,
+                        help='keep confirmed predicted boxes visible for this many missed frames')
     parser.add_argument('--project', default=ROOT / 'runs/track', help='save results to project/name')
     parser.add_argument('--name', default='exp', help='save results to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
