@@ -25,7 +25,7 @@ This repository contains a highly configurable two-stage-tracker that adjusts to
 
 ## Demonstration
 
-Example MOT20 tracking output with persistent IDs, trajectories and restricted-area alerts:
+Example Smart Surveillance output with persistent IDs, trajectories and restricted-area alerts:
 
 <video src="https://github.com/lexiegao3-cyber/YOLOv5-DeepSORT-Multi-Object-Tracking/raw/refs/heads/main/assets/img1.mp4" controls width="900"></video>
 
@@ -85,6 +85,58 @@ mot_data/
 └── MOT20/
     └── train/MOT20-01/img1/000001.jpg
 ```
+
+## UCF-Crime anomaly surveillance videos
+
+UCF-Crime is now the primary anomaly-surveillance dataset for this project.
+The official package contains `Videos/`, `Anomaly_Detection_splits/`, and
+category folders such as `Burglary`, `Stealing`, `Shoplifting`, and `Robbery`.
+Download it from the [official UCF-Crime project page](https://www.crcv.ucf.edu/projects/real-world/)
+or its [official UCF-Crime archive](https://www.crcv.ucf.edu/data1/chenchen/UCF_Crimes.zip)
+and extract it without committing the videos to Git. The full dataset is
+large, so start with one or two videos from `Burglary` or `Stealing`.
+
+Expected layout:
+
+```text
+ucf_data/UCF_Crimes/
+├── Anomaly_Detection_splits/
+│   ├── Anomaly_Train.txt
+│   └── Anomaly_Test.txt
+└── Videos/
+    ├── Burglary/*.mp4
+    ├── Stealing/*.mp4
+    └── Shoplifting/*.mp4
+```
+
+Run one Burglary video and validate it against the official test split:
+
+```bash
+python track.py \
+  --ucf-root ucf_data/UCF_Crimes \
+  --ucf-category Burglary \
+  --ucf-video Burglary001_x264.mp4 \
+  --ucf-split test \
+  --yolo_model yolov5m.pt \
+  --deep_sort_model resnet50_MSMT17 \
+  --device cpu \
+  --imgsz 1280 \
+  --conf-thres 0.25 \
+  --iou-thres 0.65 \
+  --classes 0 \
+  --event-config deep_sort/configs/events.yaml \
+  --watchlist-db runs/ucf_watchlist.sqlite3 \
+  --event-log runs/ucf_events.jsonl \
+  --save-vid
+```
+
+The split option validates membership in `Anomaly_Train.txt` or
+`Anomaly_Test.txt`; it does not train an action-recognition model. DeepSORT
+still performs person detection, identity persistence, trajectory analysis,
+restricted-zone intrusion and loitering detection. The UCF-Crime category is
+metadata for experiment organization, not proof that every frame contains a
+crime. A person is promoted to the watchlist only when the configured zone
+and abnormal-dwell rules are satisfied.
 
 Validate a local download and create a manifest:
 

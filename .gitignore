@@ -13,6 +13,9 @@ MOT20/
 MOT17Labels/
 MOT20Labels/
 mot_data/
+UCF_Crimes/
+UCF-Crime/
+ucf_data/
 runs/
 *.jsonl
 *.sqlite3

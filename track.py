@@ -31,6 +31,7 @@ from yolov5.utils.plots import Annotator, colors, save_one_box
 from deep_sort.utils.parser import get_config
 from deep_sort.deep_sort import DeepSort
 from deep_sort.events import EventLogger, load_event_config
+from deep_sort.ucf_crime import resolve_ucf_source
 from deep_sort.watchlist import WatchlistDB
 
 FILE = Path(__file__).resolve()
@@ -446,6 +447,14 @@ if __name__ == '__main__':
                         help='use the sequence det/det.txt boxes instead of YOLO detections')
     parser.add_argument('--mot-det-conf', type=float, default=0.2,
                         help='minimum confidence for MOT det.txt boxes')
+    parser.add_argument('--ucf-root', type=str, default='',
+                        help='extracted UCF-Crime root; enables UCF video selection')
+    parser.add_argument('--ucf-category', type=str, default='',
+                        help='UCF-Crime category, for example Burglary or Stealing')
+    parser.add_argument('--ucf-video', type=str, default='',
+                        help='one UCF-Crime video name or relative path')
+    parser.add_argument('--ucf-split', choices=['all', 'train', 'test'], default='all',
+                        help='official UCF-Crime anomaly detection split to validate')
     parser.add_argument('--watchlist-db', type=str, default='runs/watchlist.sqlite3',
                         help='SQLite database for persistent watchlist targets; empty disables it')
     parser.add_argument('--watch-track-id', type=int, default=None,
@@ -467,6 +476,23 @@ if __name__ == '__main__':
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
+
+    if opt.mot_root and opt.ucf_root:
+        parser.error('--mot-root and --ucf-root cannot be used together')
+    if opt.ucf_root:
+        if opt.mot_use_det:
+            parser.error('--mot-use-det is only valid with --mot-root')
+        try:
+            opt.source = resolve_ucf_source(
+                opt.ucf_root,
+                category=opt.ucf_category,
+                video=opt.ucf_video,
+                split=opt.ucf_split,
+            )
+        except (FileNotFoundError, ValueError) as error:
+            parser.error(str(error))
+    elif opt.ucf_category or opt.ucf_video or opt.ucf_split != 'all':
+        parser.error('--ucf-category, --ucf-video and --ucf-split require --ucf-root')
 
     if opt.mot_root:
         if not opt.mot_sequence:
