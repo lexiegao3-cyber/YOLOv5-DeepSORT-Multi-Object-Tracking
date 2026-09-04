@@ -410,8 +410,8 @@ if __name__ == '__main__':
     parser.add_argument('--source', type=str, default='0', help='source')  # file/folder, 0 for webcam
     parser.add_argument('--output', type=str, default='inference/output', help='output folder')  # output folder
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[640], help='inference size h,w')
-    parser.add_argument('--conf-thres', type=float, default=0.5, help='object confidence threshold')
-    parser.add_argument('--iou-thres', type=float, default=0.5, help='IOU threshold for NMS')
+    parser.add_argument('--conf-thres', type=float, default=0.25, help='object confidence threshold')
+    parser.add_argument('--iou-thres', type=float, default=0.65, help='IOU threshold for NMS')
     parser.add_argument('--fourcc', type=str, default='mp4v', help='output video codec (verify ffmpeg support)')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--show-vid', action='store_true', help='display tracking video results')
@@ -478,10 +478,14 @@ if __name__ == '__main__':
         if not opt.fps:
             opt.fps = read_mot_fps(mot_image_dir) or 15.0
         opt.save_txt = True
-        if opt.classes is None:
-            opt.classes = [0]
     elif opt.mot_use_det:
         parser.error('--mot-use-det requires --mot-root and --mot-sequence')
+
+    # This application tracks people. Apply the filter to ordinary videos as
+    # well as MOT inputs so unrelated COCO classes (for example TV) can never
+    # enter DeepSORT or appear in the output.
+    if opt.classes is None:
+        opt.classes = [0]
 
     with torch.no_grad():
         detect(opt)

@@ -29,7 +29,10 @@ Example MOT20 tracking output with persistent IDs, trajectories and restricted-a
 
 <video src="https://github.com/lexiegao3-cyber/YOLOv5-DeepSORT-Multi-Object-Tracking/raw/refs/heads/main/assets/img1.mp4" controls width="900"></video>
 
-The source video is available at [`assets/img1.mp4`](assets/img1.mp4).
+`assets/img1.mp4` is the rendered demonstration output and already contains
+drawn boxes, labels and paths. Do not use it as the input for another run;
+use the original unannotated video instead. Re-running an annotated output
+cannot remove graphics that are already baked into its pixels.
 
 
 ## Tutorials
@@ -163,10 +166,11 @@ python track.py \
   --deep_sort_model resnet50_MSMT17 --device cpu --save-vid
 ```
 
-For YOLO-only tracking, dense scenes usually benefit from a larger input and
-more permissive detection thresholds, for example `--imgsz 1280
---conf-thres 0.25 --iou-thres 0.65`. The best values depend on the camera and
-detector checkpoint.
+For YOLO-only tracking, the default person-only detector uses `--conf-thres
+0.25 --iou-thres 0.65`. Dense scenes and small people usually benefit from a
+larger input, for example `--imgsz 1280`. The best values depend on the camera
+and detector checkpoint. Non-person COCO classes such as `tv` are filtered out
+before DeepSORT.
 
 ### Persistent watchlist targets
 
