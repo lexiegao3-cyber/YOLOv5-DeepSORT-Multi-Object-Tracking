@@ -25,7 +25,7 @@ This repository contains a highly configurable two-stage-tracker that adjusts to
 
 ## Demonstration
 
-Example MOT20 tracking output with persistent IDs, trajectories and restricted-area alerts:
+Example Smart Surveillance output with persistent IDs, trajectories and restricted-area alerts:
 
 <video src="https://github.com/lexiegao3-cyber/YOLOv5-DeepSORT-Multi-Object-Tracking/raw/refs/heads/main/assets/img1.mp4" controls width="900"></video>
 
@@ -205,6 +205,122 @@ Tracked boxes and paths are rendered green by default. A watchlist target is
 rendered red and remains visible for short detector gaps using the tracker's
 predicted box. The default is 15 missed frames; adjust it with
 `--display-track-age` when the camera frame rate or scene speed requires it.
+
+## Smart Surveillance analysis report
+
+This section records the main failure modes observed while testing the
+ticket-machine scene in `img1.mp4`, their causes, and the engineering changes
+made in this repository. The screenshots shared during development were
+especially useful because they exposed a difference between a temporary
+DeepSORT track ID and a persistent watchlist identity.
+
+### What happened in the earlier output
+
+The earlier video showed three important symptoms:
+
+1. People who only walked past the ticket machines were sometimes drawn with
+   red boxes and red labels.
+2. A dense group in the background was not consistently detected.
+3. The same person appeared as `ID 6` and later as `ID 84`.
+
+The intended behavior is narrower: a person is suspicious only after entering
+the restricted ticket-machine area **and** remaining there with unusually low
+movement for the configured dwell time. Passing through the area should not
+turn a normal track red.
+
+### Root causes and solutions
+
+| Observed problem | Root cause | Current solution |
+| --- | --- | --- |
+| Non-suspects received red boxes | The old visualization connected red styling to an intrusion event. A single boundary crossing was therefore displayed like a confirmed suspect. | Red styling is now driven only by `watchlist_statuses`. A normal track stays green. Automatic promotion requires both a restricted-area entry and a loitering event. |
+| People walking through the zone were treated as suspicious | Intrusion and abnormal behavior were not separated. Walking through a zone is not the same as loitering. | The loitering timer starts only when per-frame movement falls below `MAX_STEP_MOVEMENT_UNITS` and remains low for `MIN_DURATION_SECONDS`. A moving person receives an intrusion event but is not promoted. |
+| Background people were missed | Small or partially occluded people produced weak detections; unrestricted COCO classes also consumed detection capacity and allowed irrelevant objects such as `tv` into the pipeline. | The application forces class `0` (`person`) by default, uses `--conf-thres 0.25`, `--iou-thres 0.65`, `--max-det 1000`, and recommends `--imgsz 1280` for dense scenes. The MOT20 mode can use the official detector boxes instead of YOLO detections. |
+| `ID 6` later became `ID 84` | DeepSORT IDs are temporary process-level track IDs. A missed association can create a new track. In the original association logic, a stale Kalman position gate could reject a visually matching person even when appearance matching was good. | Recent tracks use motion plus appearance gating; stale tracks rely primarily on appearance. Body ReID, face ReID, lost-track reactivation, and the SQLite watchlist preserve the target history. The overlay can show the stable `WATCHLIST-n` identity separately from the current DeepSORT ID. |
+| Zone boundaries were visually wrong | A polygon written directly in image pixels does not represent a floor area consistently across perspective. Box centers also classify tall people by their torso rather than where they stand. | The event layer supports a calibrated ground plane, maps the footpoint to world coordinates, evaluates the zone there, and projects the zone back into the image. |
+| `tv` appeared as a tracked object | The original COCO model can detect many classes when no class filter is supplied. | The final entry point applies `classes=[0]` whenever the user does not explicitly provide a class list, so non-person classes cannot reach DeepSORT. |
+
+### Why the earlier red boxes were wrong
+
+In the old output, a red box meant approximately “this track crossed the
+polygon.” It did **not** mean “this person satisfied the suspect rule.” That
+is why people who merely crossed the ticket-machine area could be drawn red.
+The corrected state machine is:
+
+```text
+normal track (green)
+        |
+        +-- footpoint enters restricted zone --> intrusion evidence
+        |
+        +-- movement remains low for dwell duration --> loitering evidence
+        |
+        +-- both pieces of evidence --> watchlist target (red)
+```
+
+Consequently, in the example discussed during testing, `person6` is the only
+person who should become suspicious if she is the only one who enters the
+ticket-machine zone and stays there. People who continue walking through it
+remain green. The category name “suspect” is an alert label, not proof that a
+crime occurred.
+
+### Why `ID 6` became `ID 84`
+
+`6` and `84` were not two permanent identities. They were two temporary
+DeepSORT track IDs created after the association failed during occlusion,
+scale change, or a large position jump. The old motion gate made this worse:
+even though the appearance cost was the main cost, a failed positional gate
+could still reject the pair and cause a new track to be initialized.
+
+The current implementation addresses the failure at three levels:
+
+- age-adaptive association prevents a stale Kalman prediction from vetoing a
+  strong appearance match;
+- body and face embeddings provide complementary appearance evidence, with
+  face matching used only when a reliable face is available;
+- the lost-track reactivation layer and SQLite watchlist keep the persistent
+  target identity and event history when the temporary track ID changes.
+
+This is why the UI may still show a current tracker ID changing in a difficult
+frame, but the watchlist label and accumulated suspect history do not have to
+restart.
+
+### Implementation difficulties encountered
+
+The development process exposed several practical issues beyond the tracking
+algorithm itself:
+
+- Missing packages (`torch`, `gdown`, `opencv-python`, and `insightface`)
+  prevented the first complete run. They were installed in the project
+  environment, and the InsightFace model was checked separately because its
+  ONNX files are downloaded and cached independently.
+- The first age-adaptive gate patch produced an `IndexError` because the gate
+  arrays were indexed inconsistently with the track rows. The association
+  code was rewritten around row-aligned masks and face-availability masks.
+- Reusing a rendered output as a new input caused old boxes, paths, and labels
+  to remain permanently visible. The README now distinguishes clean input
+  media from rendered output media.
+- A single image-plane polygon produced false zone decisions on a perspective
+  camera. Calibration points, world coordinates, and bottom-center
+  footpoints were added to make the zone a floor-space decision.
+- CPU inference is much slower in crowded scenes, especially when body and
+  face appearance features are extracted. Larger input resolution improves
+  recall but increases processing time, so the detector and ReID settings
+  remain configurable.
+
+### Current verification checklist
+
+For a clean video, verify the following in order:
+
+1. only person boxes are rendered;
+2. ordinary tracks remain green and their paths are not drawn when the
+   watchlist filter is active;
+3. a boundary crossing creates an intrusion event but does not immediately
+   create a red suspect label;
+4. only a track that also satisfies the low-movement dwell rule is promoted;
+5. the watchlist ID remains stable when the temporary DeepSORT ID changes;
+6. the event JSONL file and SQLite database contain the same target history.
+
+The output video in `assets/img1.mp4` is a rendered demonstration. For a new
+experiment, always provide the original unannotated video with `--source`.
 
 
 ## Select object detection and ReID model
